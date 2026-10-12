@@ -23,15 +23,20 @@ body{
 }
 h1{font-size:15px;font-weight:600;letter-spacing:.02em;margin:2px 0 10px;color:#7f95ad}
 h1 b{color:#f0a830;font-weight:700}
+#ver{float:right;font-size:11px;color:#5d7389;font-weight:500}
 
 #tabs{display:flex;gap:5px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch}
 #tabs::-webkit-scrollbar{display:none}
-.tab{flex:0 0 auto;background:#1e2d3d;border:none;border-radius:7px;color:#93a9be;
-  font-family:inherit;font-weight:600;font-size:13px;padding:7px 11px;cursor:pointer;text-align:left;line-height:1.15}
+.tab{flex:0 0 auto;display:flex;align-items:center;gap:6px;background:#1e2d3d;border:none;border-radius:7px;
+  color:#93a9be;font-family:inherit;font-weight:600;font-size:13px;padding:7px 7px 7px 11px;cursor:pointer;
+  text-align:left;line-height:1.15;user-select:none}
 .tab i{display:block;font-style:normal;font-size:10px;opacity:.65;font-weight:500}
+.tab .x{font-size:17px;line-height:1;opacity:.45;padding:3px 6px;border-radius:5px}
+.tab .x:active{background:rgba(255,255,255,.14)}
 .tab.on{background:#f0a830;color:#241701}
 .tab.on i{opacity:.8}
-.tab.add{color:#7f95ad;background:#182432}
+.tab.on .x{opacity:.7}
+.tab.add{color:#7f95ad;background:#182432;padding:7px 11px}
 
 /* ---------- board ---------- */
 #board{display:grid;grid-template-columns:repeat(9,1fr);gap:3px;background:#0f1822;padding:4px;border-radius:8px}
@@ -118,7 +123,7 @@ h1 b{color:#f0a830;font-weight:700}
 
 <div id="loading"><div class="spin"></div><span>Sözlük yükleniyor…</span></div>
 
-<h1>5'lik <b>yardımcı</b> · 9×9</h1>
+<h1>5'lik <b>yardımcı</b> · 9×9 <span id="ver"></span></h1>
 <div id="tabs"></div>
 <div id="board"></div>
 
@@ -139,6 +144,7 @@ h1 b{color:#f0a830;font-weight:700}
   <button class="btn sm" id="bStrat">Analiz: Stratejik</button>
 </div>
 <div class="row">
+  <button class="btn sm" id="bBonus">7 harf: +30</button>
   <button class="btn sm" id="bClearRack">Eli sil</button>
   <button class="btn sm" id="bClearBoard">Tahtayı sil</button>
 </div>
@@ -170,6 +176,9 @@ let stars=new Set();   // ödül kareleri "r,c"
 let strategic=true;
 const TILES={A:12,B:2,C:2,"Ç":2,D:2,E:8,F:1,G:1,"Ğ":1,H:1,I:4,"İ":7,J:1,K:7,L:7,M:4,N:5,O:3,"Ö":1,P:1,R:6,S:3,"Ş":2,T:5,U:3,"Ü":2,V:1,Y:2,Z:2,"?":2};
 const VOW="AEIİOÖUÜ";
+const APPVER="v4 · 12.10.2026";
+let BONUS7=30;
+let lastEnd=false;
 const STAR=25;
 let ROOT=null;
 
@@ -240,7 +249,9 @@ function drawTracker(){
     h+='<span class="chip'+(rem===0?" z":(rem===1?" lo":""))+'">'+(k==="?"?"★":k)+"<b>"+rem+"</b></span>";
   }
   const unseen=100-seen;
-  h+='<div id="tsum">Görünmeyen '+unseen+' taş · torbada ~'+Math.max(0,unseen-7)+' · rakipte 7</div>';
+  h+='<div id="tsum">'+(unseen<=7
+      ? "Torba boş · rakibin elinde "+unseen+" taş (kesin biliniyor)"
+      : "Görünmeyen "+unseen+" taş · torbada ~"+(unseen-7)+" · rakipte 7")+'</div>';
   $trk.innerHTML=h;
 }
 function draw(){drawBoard();drawRack();drawTracker();save()}
@@ -256,7 +267,7 @@ function snap(g){g.N=N;g.board=board;g.rack=rack;g.stars=[...stars];g.dir=dir;g.
 function save(){
   if(!ready)return;
   const g=curGame();if(g)snap(g);
-  try{localStorage.setItem(SKEY2,JSON.stringify({v:2,active:activeId,strategic,games}));saveOk=true}
+  try{localStorage.setItem(SKEY2,JSON.stringify({v:2,active:activeId,strategic,bonus7:BONUS7,games}));saveOk=true}
   catch(e){
     if(saveOk!==false){saveOk=false;
       $st.textContent="Kayıt yapılamıyor — dosyayı doğrudan açtığın için tarayıcı izin vermiyor. Sunucuya koyup aç.";}
@@ -290,24 +301,38 @@ function delGame(id){
   if(activeId===id){activeId=games[0].id;applyGame(curGame())}
   drawTabs();draw();
 }
+function isEmptyGame(g){
+  const eb=!g.board||g.board.every(r=>r.every(x=>!x));
+  const er=!g.rack||g.rack.every(x=>!x);
+  return eb&&er;
+}
+function askDelete(id){
+  const g=games.find(x=>x.id===id);if(!g)return;
+  if(id===activeId)snap(g);               // aktif oyunun son hali nesneye yazılsın
+  if(!isEmptyGame(g)&&!confirm('"'+g.name+'" silinsin mi? Tahtada taş var.'))return;
+  delGame(id);
+}
 function drawTabs(){
   let h="";
   for(const g of games)
-    h+='<button class="tab'+(g.id===activeId?" on":"")+'" data-id="'+g.id+'">'+esc(g.name)+'<i>'+g.N+"×"+g.N+'</i></button>';
-  if(games.length<MAXG)h+='<button class="tab add" data-new="1">＋ yeni</button>';
+    h+='<div class="tab'+(g.id===activeId?" on":"")+'" data-id="'+g.id+'">'
+      +'<span class="nm">'+esc(g.name)+'<i>'+g.N+"×"+g.N+'</i></span>'
+      +'<span class="x">×</span></div>';
+  if(games.length<MAXG)h+='<div class="tab add" data-new="1">＋ yeni</div>';
   $tabs.innerHTML=h;
   for(const el of $tabs.children){
     if(el.dataset.new){
-      el.onclick=()=>{const nm=prompt("Rakip / oyun adı:","Oyun "+(games.length+1));if(nm===null)return;newGame(N,nm.trim()||("Oyun "+(games.length+1)))};
+      el.onclick=()=>{const nm=prompt("Rakip / oyun adı:","Oyun "+(games.length+1));if(nm===null)return;newGame(N,(nm||"").trim()||("Oyun "+(games.length+1)))};
       continue;
     }
     const id=el.dataset.id;
+    const x=el.querySelector(".x");
+    if(x)x.onclick=ev=>{ev.stopPropagation();askDelete(id)};
     el.onclick=()=>{
       if(id!==activeId){switchTo(id);return}
       const g=curGame();
-      const nm=prompt("Oyun adı (boş bırakırsan bu oyun silinir):",g.name);
-      if(nm===null)return;
-      if(!nm.trim()){if(confirm('"'+g.name+'" silinsin mi?'))delGame(id);return}
+      const nm=prompt("Oyun adı:",g.name);
+      if(nm===null||!nm.trim())return;
       g.name=nm.trim();drawTabs();save();
     };
   }
@@ -320,6 +345,7 @@ function loadAll(){
       if(Array.isArray(d.games)&&d.games.length){
         games=d.games;
         strategic=d.strategic!==false;
+        if(typeof d.bonus7==="number")BONUS7=d.bonus7;
         activeId=games.some(g=>g.id===d.active)?d.active:games[0].id;
         applyGame(curGame());return true;
       }
@@ -446,25 +472,37 @@ function solve(){
 
   if(strategic&&list.length){
     const pool=unseenPool();
-    const cands=list.slice(0,10);
-    // aynı rakip elleri tüm adaylarda kullanılır: karşılaştırma adil olsun
+    const endgame=pool.length>0&&pool.length<=7;   // torba boş → rakibin eli KESİN olarak pool
+    lastEnd=endgame;
+    const pts=a=>a.reduce((x,L)=>x+(L==="?"?0:PTS[L]),0);
+    const oppPts=pts(pool);
+    const cands=list.slice(0,16);
     const oppRacks=[];
-    if(pool.length>=7)for(let i=0;i<3;i++){
-      const oc={};for(const L of drawFrom(pool,7))oc[L]=(oc[L]||0)+1;oppRacks.push(oc);
+    if(endgame){
+      const oc={};for(const L of pool)oc[L]=(oc[L]||0)+1;oppRacks.push(oc);   // tahmin yok, birebir
+    }else if(pool.length>=7){
+      // aynı rakip elleri tüm adaylarda kullanılır: karşılaştırma adil olsun
+      for(let i=0;i<3;i++){const oc={};for(const L of drawFrom(pool,7))oc[L]=(oc[L]||0)+1;oppRacks.push(oc)}
     }
     for(const m of cands){
       const c2={...counts};
       for(const p of m.placed)c2[p.j?"?":p.L]--;
       const left=[];for(const k in c2)for(let i=0;i<c2[k];i++)left.push(k);
       m.leave=left.map(x=>x==="?"?"★":x).join("");
-      m.lv=leaveVal(left);
-      if(oppRacks.length){
+      m.out=left.length===0;
+      if(endgame){
+        // torba boş: yeni taş çekilmez. Bitirirsen rakibin kalanı sana yazılır,
+        // bitiremezsen seninki hem senden düşer hem ona eklenir (iki katı etki).
+        m.lv=0;
+        m.end=m.out?oppPts:-2*pts(left);
+      }else{m.lv=leaveVal(left);m.end=0}
+      if(oppRacks.length&&!m.out){
         const nb=simBoard(board,m.placed);
         let sum=0;
         for(const oc of oppRacks)sum+=bestScore(nb,oc);
         m.opp=Math.round(sum/oppRacks.length);
       }else m.opp=0;
-      m.final=Math.round(m.score+m.lv-0.6*m.opp);
+      m.final=Math.round(m.score+m.lv+m.end-0.6*m.opp);
     }
     cands.sort((a,b)=>b.final-a.final);
     list=cands;
@@ -527,8 +565,8 @@ function run(G,B,D,counts,emptyBoard,out){
     const abs=placed.map(p=>D===0?{r,c:p.c,L:p.L,j:p.j}:{r:p.c,c:r,L:p.L,j:p.j});
     let sb=0;
     if(stars.size)for(const p of abs)if(stars.has(p.r+","+p.c))sb+=STAR;
-    const score=ms*wm+cs+sb;
-    out.push({word:w,score,dir:D,r:D===0?r:start,c:D===0?start:r,placed:abs,used:placed.length,star:sb});
+    const score=ms*wm+cs+sb+(placed.length===7?BONUS7:0);
+    out.push({word:w,score,dir:D,r:D===0?r:start,c:D===0?start:r,placed:abs,used:placed.length,star:sb,bingo:placed.length===7?BONUS7:0});
   }
 
   function extend(node,r,c,placed,start){
@@ -589,8 +627,14 @@ function renderRes(ms,cnt){
     d.className="mv"+(i===sel?" sel":"");
     let h='<div class="top"><span class="w">'+m.word+(m.star?' <span class="rw2">★+'+m.star+'</span>':'')
       +'</span><span class="m">'+(m.dir?"↓":"→")+" "+(m.r+1)+","+(m.c+1)+'</span><span class="s">'+m.score+'</span></div>';
-    if(strategic&&m.final!==undefined)
-      h+='<div class="sub">elde kalır '+(m.leave||"—")+' · rakip ≈'+m.opp+' · net '+m.final+'</div>';
+    if(strategic&&m.final!==undefined){
+      let sub;
+      if(lastEnd) sub = m.out ? "OYUNU BİTİRİR · rakibin kalanı +"+m.end+" · net "+m.final
+                              : "elde kalır "+m.leave+" ("+m.end+") · rakip ≈"+m.opp+" · net "+m.final;
+      else sub = "elde kalır "+(m.leave||"—")+" · rakip ≈"+m.opp+" · net "+m.final;
+      if(m.bingo)sub="7 harf +"+m.bingo+" · "+sub;
+      h+='<div class="sub">'+sub+'</div>';
+    }
     d.innerHTML=h;
     d.onclick=()=>{sel=i;ghost=m.placed;renderRes(ms,cnt);draw()};
     $res.appendChild(d);
@@ -599,6 +643,11 @@ function renderRes(ms,cnt){
 
 /* ---------- actions ---------- */
 document.getElementById("bSolve").onclick=()=>{$st.textContent="hesaplanıyor…";setTimeout(solve,15)};
+document.getElementById("bBonus").onclick=()=>{
+  BONUS7=BONUS7===30?50:(BONUS7===50?20:(BONUS7===20?0:30));
+  document.getElementById("bBonus").textContent="7 harf: +"+BONUS7;
+  moves=[];sel=-1;ghost=null;$res.innerHTML="";draw();
+};
 document.getElementById("bStrat").onclick=()=>{
   strategic=!strategic;
   document.getElementById("bStrat").textContent="Analiz: "+(strategic?"Stratejik":"Hızlı");
@@ -665,6 +714,8 @@ if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
     if(!resumed){applyMode(9);games=[{id:"g0",name:"Oyun 1",N:9,board:null,rack:null,stars:[],dir:0,cur:null,ts:Date.now()}];activeId="g0";applyGame(games[0])}
     ready=true;
     document.getElementById("bStrat").textContent="Analiz: "+(strategic?"Stratejik":"Hızlı");
+    document.getElementById("bBonus").textContent="7 harf: +"+BONUS7;
+    document.getElementById("ver").textContent=APPVER;
     if(resumed&&games.length>1)$st.textContent=games.length+" oyun kayıtlı. Üstteki sekmelerden geçiş yap.";
     else if(resumed)$st.textContent="Kaldığın yerden devam ediyorsun.";
     drawTabs();draw();
